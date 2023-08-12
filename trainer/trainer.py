@@ -1,39 +1,39 @@
-import os
-from pathlib import Path
-import time
+import collections.abc
 import datetime
 import json
-import re
 import logging
-import warnings
-import random
 import math
-import collections.abc
+import os
+import random
+import re
 import shutil
-from typing import Dict, Union, Any, Optional, List, Tuple
+import time
+import warnings
+
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn as nn
+import wandb
+
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-import torch.distributed as dist
-
-from transformers.optimization import AdamW, Adafactor, get_scheduler
-from transformers.trainer_pt_utils import (
-    get_parameter_names,
-    reissue_pt_warnings,
-    ShardSampler,
-    torch_pad_and_concatenate,
-    numpy_pad_and_concatenate,
-)
-from transformers.trainer import TrainerState
-from transformers.trainer_utils import (
-    IntervalStrategy,
-    denumpify_detensorize,
-)
-import wandb
 from tqdm import tqdm
+from transformers.optimization import Adafactor, AdamW, get_scheduler
+from transformers.trainer import TrainerState
+from transformers.trainer_pt_utils import (
+    ShardSampler,
+    get_parameter_names,
+    numpy_pad_and_concatenate,
+    reissue_pt_warnings,
+    torch_pad_and_concatenate,
+)
+from transformers.trainer_utils import IntervalStrategy, denumpify_detensorize
+
 
 logger = logging.getLogger(__name__)
 WEIGHTS_NAME = "pytorch_model.bin"
@@ -73,7 +73,9 @@ def nested_concat(tensors, new_tensors, padding_index=-100):
         return type(tensors)(nested_concat(t, n, padding_index=padding_index) for t, n in zip(tensors, new_tensors))
     elif isinstance(tensors, dict):
         assert set(tensors.keys()) == set(new_tensors.keys())
-        return type(tensors)({k: nested_concat(tensors[k], new_tensors[k], padding_index=padding_index) for k in tensors.keys()})
+        return type(tensors)(
+            {k: nested_concat(tensors[k], new_tensors[k], padding_index=padding_index) for k in tensors.keys()}
+        )
     elif isinstance(tensors, torch.Tensor):
         return torch_pad_and_concatenate(tensors, new_tensors, padding_index=padding_index)
     elif isinstance(tensors, np.ndarray):
@@ -144,18 +146,18 @@ class Trainer:
     scheduler = None
     state = None
 
-    def __init__(self,
-                 args,
-                 model,
-                 compute_metrics,
-                 train_dataset,
-                 eval_dataset,
-                 visualizer,
-                 wandb_run_dir=None,
-                 ):
-
+    def __init__(
+        self,
+        args,
+        model,
+        compute_metrics,
+        train_dataset,
+        eval_dataset,
+        visualizer,
+        wandb_run_dir=None,
+    ):
         # force device and distributed setup init explicitly
-        logging.info(f'Rank {args.local_rank} device = {args.device}')
+        logging.info(f"Rank {args.local_rank} device = {args.device}")
 
         self.args = args
         self.output_interval = 50
@@ -221,16 +223,16 @@ class Trainer:
             },
         ]
         for n, p in self.model.named_parameters():
-            if 'gan_wrapper' in n:
+            if "gan_wrapper" in n:
                 continue
             if n in decay_parameters and p.requires_grad:
                 optimizer_grouped_parameters[0]["params"].append(p)
                 if self.args.verbose and self.is_world_process_zero():
-                    print('Trainable (w/ weight decay):', n)
+                    print("Trainable (w/ weight decay):", n)
             elif n not in decay_parameters and p.requires_grad:
                 optimizer_grouped_parameters[1]["params"].append(p)
                 if self.args.verbose and self.is_world_process_zero():
-                    print('Trainable (w/o weight decay):', n)
+                    print("Trainable (w/o weight decay):", n)
 
         if self.args.adafactor:
             optimizer_cls = Adafactor
@@ -349,7 +351,7 @@ class Trainer:
         self.state.log_history.append(output)
 
         # wandb
-        wandb.log(logs)
+        # wandb.log(logs)
 
     def is_local_process_zero(self) -> bool:
         """
@@ -371,7 +373,9 @@ class Trainer:
         if len(load_result.missing_keys) != 0:
             logger.warning(f"There were missing keys in the checkpoint model loaded: {load_result.missing_keys}.")
         if len(load_result.unexpected_keys) != 0:
-            logger.warning(f"There were unexpected keys in the checkpoint model loaded: {load_result.unexpected_keys}.")
+            logger.warning(
+                f"There were unexpected keys in the checkpoint model loaded: {load_result.unexpected_keys}."
+            )
 
     def save_model(self, output_dir: Optional[str] = None):
         """
@@ -402,7 +406,7 @@ class Trainer:
         self.state.save_to_json(path)
 
     def _sorted_checkpoints(
-            self, output_dir=None, checkpoint_prefix=PREFIX_CHECKPOINT_DIR, use_mtime=False
+        self, output_dir=None, checkpoint_prefix=PREFIX_CHECKPOINT_DIR, use_mtime=False
     ) -> List[str]:
         ordering_and_checkpoint_path = []
 
@@ -438,9 +442,9 @@ class Trainer:
         # we don't do to allow resuming.
         save_total_limit = self.args.save_total_limit
         if (
-                self.state.best_model_checkpoint is not None
-                and self.args.save_total_limit == 1
-                and checkpoints_sorted[-1] != self.state.best_model_checkpoint
+            self.state.best_model_checkpoint is not None
+            and self.args.save_total_limit == 1
+            and checkpoints_sorted[-1] != self.state.best_model_checkpoint
         ):
             save_total_limit = 2
 
@@ -478,9 +482,9 @@ class Trainer:
 
             operator = np.greater if self.args.greater_is_better else np.less
             if (
-                    self.state.best_metric is None
-                    or self.state.best_model_checkpoint is None
-                    or operator(metric_value, self.state.best_metric)
+                self.state.best_metric is None
+                or self.state.best_model_checkpoint is None
+                or operator(metric_value, self.state.best_metric)
             ):
                 self.state.best_metric = metric_value
                 self.state.best_model_checkpoint = output_dir
@@ -506,11 +510,12 @@ class Trainer:
         if self.args.should_save:
             self._rotate_checkpoints(use_mtime=True, output_dir=run_dir)
 
-    def _maybe_log_save_evaluate(self,
-                                 weighted_loss,
-                                 losses,
-                                 epoch_end,
-                                 ):
+    def _maybe_log_save_evaluate(
+        self,
+        weighted_loss,
+        losses,
+        epoch_end,
+    ):
         args, state = self.args, self.state
 
         should_log, should_evaluate, should_save = False, False, False
@@ -533,9 +538,9 @@ class Trainer:
 
         # Save?
         if (
-                args.save_strategy == IntervalStrategy.STEPS
-                and args.save_steps > 0
-                and state.global_step % args.save_steps == 0
+            args.save_strategy == IntervalStrategy.STEPS
+            and args.save_steps > 0
+            and state.global_step % args.save_steps == 0
         ):
             should_save = True
         if args.save_strategy == IntervalStrategy.EPOCH and epoch_end:
@@ -543,10 +548,7 @@ class Trainer:
 
         # Log.
         if should_log:
-            logs = {
-                name: loss.mean(0).item()
-                for name, loss in losses.items()
-            }
+            logs = {name: loss.mean(0).item() for name, loss in losses.items()}
 
             logs["weighted_loss"] = weighted_loss.item()
             logs["learning_rate"] = self.scheduler.get_last_lr()[0]
@@ -767,8 +769,8 @@ class Trainer:
         return images, weighted_loss, losses
 
     def prediction_step(
-            self,
-            inputs: Dict[str, Union[torch.Tensor, Any]],
+        self,
+        inputs: Dict[str, Union[torch.Tensor, Any]],
     ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         Perform an evaluation step on :obj:`model` using obj:`inputs`.
@@ -791,10 +793,10 @@ class Trainer:
         return images, weighted_loss, losses
 
     def evaluation_loop(
-            self,
-            dataloader: DataLoader,
-            description: str,
-            metric_key_prefix: str = "eval",
+        self,
+        dataloader: DataLoader,
+        description: str,
+        metric_key_prefix: str = "eval",
     ) -> Tuple[Dict[str, float], int]:
         """
         Prediction/evaluation loop, shared by :obj:`Trainer.evaluate()` and :obj:`Trainer.predict()`.
@@ -824,7 +826,7 @@ class Trainer:
         # Will be useful when we have an iterable dataset so don't know its length.
 
         # Main evaluation loop
-        for step, inputs in tqdm(enumerate(dataloader)):
+        for step, inputs in tqdm(enumerate(dataloader), total=len(dataloader), desc="evaluating dataloader"):
             # Prediction step
             prediction_outputs = self.prediction_step(inputs)
 
@@ -832,8 +834,9 @@ class Trainer:
             if prediction_outputs is not None:
                 prediction_outputs = distributed_concat(prediction_outputs)
             prediction_outputs_host = (
-                prediction_outputs if prediction_outputs_host is None else
-                nested_concat(prediction_outputs_host, prediction_outputs, padding_index=-100)
+                prediction_outputs
+                if prediction_outputs_host is None
+                else nested_concat(prediction_outputs_host, prediction_outputs, padding_index=-100)
             )
 
             # Gather all tensors and put them back on the CPU if we have done enough accumulation steps.
@@ -841,8 +844,9 @@ class Trainer:
                 if prediction_outputs_host is not None:
                     prediction_outputs = nested_cpu(prediction_outputs_host)
                     all_prediction_outputs = (
-                        prediction_outputs if all_prediction_outputs is None else
-                        nested_concat(all_prediction_outputs, prediction_outputs, padding_index=-100)
+                        prediction_outputs
+                        if all_prediction_outputs is None
+                        else nested_concat(all_prediction_outputs, prediction_outputs, padding_index=-100)
                     )
 
                 # Set back to None to begin a new accumulation
@@ -852,8 +856,9 @@ class Trainer:
         if prediction_outputs_host is not None:
             prediction_outputs = nested_cpu(prediction_outputs_host)
             all_prediction_outputs = (
-                prediction_outputs if all_prediction_outputs is None else
-                nested_concat(all_prediction_outputs, prediction_outputs, padding_index=-100)
+                prediction_outputs
+                if all_prediction_outputs is None
+                else nested_concat(all_prediction_outputs, prediction_outputs, padding_index=-100)
             )
 
         # Number of samples
@@ -869,13 +874,14 @@ class Trainer:
         # Metrics!
         if self.is_world_process_zero():
             if self.compute_metrics and all_prediction_outputs:
-                metrics = self.compute_metrics(images,
-                                               self.model.module,
-                                               weighted_loss,
-                                               losses,
-                                               dataset=eval_dataset,
-                                               split=metric_key_prefix,
-                                               )
+                metrics = self.compute_metrics(
+                    images,
+                    self.model.module,
+                    weighted_loss,
+                    losses,
+                    dataset=eval_dataset,
+                    split=metric_key_prefix,
+                )
             else:
                 metrics = {}
 
@@ -903,9 +909,9 @@ class Trainer:
         args = self.args
 
         # Build train dataloader.
-        print('In train')
+        print("In train")
         train_dataloader = self.get_train_dataloader()
-        print('Train loader successfully built')
+        print("Train loader successfully built")
         # Set up training control variables.
         total_train_batch_size = args.train_batch_size * args.gradient_accumulation_steps * args.world_size
         assert isinstance(self.train_dataset, collections.abc.Sized)
@@ -956,12 +962,13 @@ class Trainer:
                 _, weighted_loss, losses = self.training_step(inputs)
 
                 if (step + 1) % args.gradient_accumulation_steps == 0 or (
-                        # last step in epoch but step is always smaller than gradient_accumulation_steps
-                        (step + 1) == steps_in_epoch <= args.gradient_accumulation_steps
+                    # last step in epoch but step is always smaller than gradient_accumulation_steps
+                    (step + 1)
+                    == steps_in_epoch
+                    <= args.gradient_accumulation_steps
                 ):
                     # Gradient clipping
                     if args.max_grad_norm is not None and args.max_grad_norm > 0:
-
                         if hasattr(self.optimizer, "clip_grad_norm"):
                             # Some optimizers (like the sharded optimizer) have a specific way to do gradient clipping
                             self.optimizer.clip_grad_norm(args.max_grad_norm)
@@ -1015,9 +1022,9 @@ class Trainer:
         return metrics
 
     def evaluate(
-            self,
-            eval_dataset: Optional[Dataset] = None,
-            metric_key_prefix: str = "eval",
+        self,
+        eval_dataset: Optional[Dataset] = None,
+        metric_key_prefix: str = "eval",
     ) -> Dict[str, float]:
         """
         Run evaluation and returns metrics.
@@ -1066,9 +1073,9 @@ class Trainer:
         return metrics
 
     def predict(
-            self,
-            test_dataset: Dataset,
-            metric_key_prefix: str = "test",
+        self,
+        test_dataset: Dataset,
+        metric_key_prefix: str = "test",
     ) -> Dict[str, float]:
         """
         Run prediction and returns predictions and potential metrics.

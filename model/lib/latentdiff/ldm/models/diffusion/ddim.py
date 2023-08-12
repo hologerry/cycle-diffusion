@@ -1,11 +1,16 @@
 """SAMPLING ONLY."""
 
-import torch
-import numpy as np
-from tqdm import tqdm
 from functools import partial
 
-from ldm.modules.diffusionmodules.util import make_ddim_sampling_parameters, make_ddim_timesteps, noise_like
+import numpy as np
+import torch
+
+from ldm.modules.diffusionmodules.util import (
+    make_ddim_sampling_parameters,
+    make_ddim_timesteps,
+    noise_like,
+)
+from tqdm import tqdm
 
 
 class DDIMSampler(object):
@@ -469,7 +474,7 @@ class DDIMSampler(object):
         print(f"Running DDIM Sampling with {total_steps} timesteps and {refine_steps} refinement steps")
 
         refine_time_range = time_range[-refine_steps:]
-        iterator = tqdm(refine_time_range, desc='DDIM Sampler', total=refine_steps, disable=True)
+        iterator = tqdm(refine_time_range, desc='Encoding DDIM Sampler', total=refine_steps)
 
         # Sample xt
         alphas = self.model.alphas_cumprod if ddim_use_original_steps else self.ddim_alphas

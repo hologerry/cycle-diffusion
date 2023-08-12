@@ -132,3 +132,7 @@ Temporary Items
 
 # PyCharm
 **/.idea/**/*
+
+ckpts
+data/example
+output

@@ -1,4 +1,4 @@
-name: generative_prompt
+name: cycle
 channels:
   - defaults
 dependencies:

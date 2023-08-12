@@ -1,24 +1,29 @@
 import logging
 import os
 
-import torch
 import datasets
+import torch
 import transformers
-from transformers import (
-    HfArgumentParser,
-    set_seed,
-)
-from utils.config_utils import get_config
-from utils.program_utils import get_model, get_preprocessor, get_evaluator, get_visualizer
+
+from transformers import HfArgumentParser, set_seed
+
 from preprocess.to_model import get_multi_task_dataset_splits
-from utils.training_arguments import CustomTrainingArguments
 from trainer.trainer import Trainer
+from utils.config_utils import get_config
+from utils.program_utils import (
+    get_evaluator,
+    get_model,
+    get_preprocessor,
+    get_visualizer,
+)
+from utils.training_arguments import CustomTrainingArguments
+
 
 logger = logging.getLogger(__name__)
 
 
 def get_dataset_splits(args):
-    cache_root = os.path.join('output', 'cache')
+    cache_root = os.path.join("output", "cache")
     os.makedirs(cache_root, exist_ok=True)
     name2dataset_splits = dict()
     for name, arg_path in args.arg_paths:
@@ -45,7 +50,7 @@ def setup_wandb(training_args):
         wandb.init(
             project=os.getenv("WANDB_PROJECT", "your project name"),
             name=training_args.run_name,
-            entity=os.getenv("WANDB_ENTITY", 'your entity'),
+            entity=os.getenv("WANDB_ENTITY", "your entity"),
         )
         wandb.config.update(training_args, allow_val_change=True)
 
@@ -55,16 +60,15 @@ def setup_wandb(training_args):
 
 
 def main():
-
     # Get training_args and args.
-    parser = HfArgumentParser(
-        (
-            CustomTrainingArguments,
-        )
-    )
-    training_args, = parser.parse_args_into_dataclasses()
+    parser = HfArgumentParser((CustomTrainingArguments,))
+    (training_args,) = parser.parse_args_into_dataclasses()
     set_seed(training_args.seed)
     args = get_config(training_args.cfg)
+    print("training_args:")
+    print(training_args)
+    print("args:")
+    print(args)
 
     # Deterministic behavior of torch.addmm.
     # Please refer to https://docs.nvidia.com/cuda/cublas/index.html#cublasApi_reproducibility
@@ -73,7 +77,8 @@ def main():
     # cudnn.deterministic = True
 
     # Set up wandb.
-    wandb_run_dir = setup_wandb(training_args)
+    # wandb_run_dir = setup_wandb(training_args)
+    wandb_run_dir = None
     # Setup output directory.
     os.makedirs(training_args.output_dir, exist_ok=True)
     args.output_dir = training_args.output_dir
@@ -92,12 +97,12 @@ def main():
         args=training_args,
         model=model,
         compute_metrics=evaluator.evaluate,
-        train_dataset=dataset_splits['train'],
-        eval_dataset=dataset_splits['dev'],
+        train_dataset=dataset_splits["train"],
+        eval_dataset=dataset_splits["dev"],
         visualizer=visualizer,
         wandb_run_dir=wandb_run_dir,
     )
-    print(f'Rank {training_args.local_rank} Trainer build successfully.')
+    print(f"Rank {training_args.local_rank} Trainer build successfully.")
 
     if training_args.resume_from_checkpoint:
         state_dict = torch.load(
@@ -110,10 +115,11 @@ def main():
 
     # Training
     if training_args.do_train:
+        logger.info("*** Train ***")
         metrics = trainer.train()
         trainer.save_model()
 
-        metrics["train_samples"] = len(dataset_splits['train'])
+        metrics["train_samples"] = len(dataset_splits["train"])
 
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)
@@ -125,7 +131,7 @@ def main():
     metrics = trainer.evaluate(
         metric_key_prefix="eval",
     )
-    metrics["eval_samples"] = len(dataset_splits['dev'])
+    metrics["eval_samples"] = len(dataset_splits["dev"])
 
     trainer.log_metrics("eval", metrics)
     trainer.save_metrics("eval", metrics)
@@ -135,10 +141,10 @@ def main():
         logger.info("*** Predict ***")
 
         metrics = trainer.predict(
-            test_dataset=dataset_splits['test'],
+            test_dataset=dataset_splits["test"],
             metric_key_prefix="test",
         )
-        metrics["predict_samples"] = len(dataset_splits['test'])
+        metrics["predict_samples"] = len(dataset_splits["test"])
 
         trainer.log_metrics("predict", metrics)
         trainer.save_metrics("predict", metrics)
